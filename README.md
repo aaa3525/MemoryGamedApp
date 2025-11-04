@@ -45,7 +45,7 @@ getTopScores()	Read	Returns top 5 players and their scores
 
 🚀 Setup Instructions
   1️⃣ Clone or Download
-  git clone https://github.com/aaa3525/memory-game-dapp.git
+  git clone https://github.com/aaa3525/MemoryGamedApp.git
   cd memory-game-dapp
   
   2️⃣ Open in VS Code
