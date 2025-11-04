@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Memory Game On-Chain Scores</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/ethers@6/dist/ethers.umd.min.js"></script>
+</head>
+<body>
+<header>
+  <h1>Memory Game — Sepolia On-Chain Scores</h1>
+  <p>Connect your wallet and play. Submit your score to the blockchain.</p>
+  <button id="connectBtn">Connect Wallet</button>
+  <p id="walletStatus">Not connected</p>
+</header>
+
+<main>
+<section id="gameSection">
+  <h2>Game</h2>
+  <button id="newGameBtn">New Game</button>
+  <p>Moves: <span id="moves">0</span> | Matches: <span id="matches">0</span></p>
+  <ul id="grid" class="grid"></ul>
+  <div id="result" class="result"></div>
+
+  <h3>Submit Score</h3>
+  <p>Last score: <span id="lastScore">—</span></p>
+  <button id="submitScoreBtn" disabled>Submit Score to Blockchain</button>
+  <p id="txStatus"></p>
+</section>
+
+<aside id="leaderboardSection">
+  <h2>Leaderboard (Top 5)</h2>
+  <ol id="leaderboardList">
+    <li>—</li><li>—</li><li>—</li><li>—</li><li>—</li>
+  </ol>
+  <h3>My Best</h3>
+  <p id="myBest">—</p>
+  <p>README link: <a href="README.md" target="_blank">README.md</a></p>
+</aside>
+</main>
+
+<footer>
+  <p>Contract: <a id="contractLink" href="#" target="_blank">Not set</a></p>
+  <img src="images/memory-icon.png" alt="memory icon">
+</footer>
+
+<script>
+// ---------------- CONFIG ----------------
+const CONTRACT_ADDRESS = "0xaFf3531Ab24f7f3CdfE3dD9A82c7499eC5dEC265"; // replace with your deployed contract
+const CONTRACT_ABI = [
+  "function recordScore(uint256 _score) external",
+  "function getMyBestScore() external view returns (uint256)",
+  "function getTopScores() external view returns (address[] memory, uint256[] memory)"
+];
+
+let provider, signer, contract;
+
+// ---------------- DOM ----------------
+const connectBtn = document.getElementById('connectBtn');
+const walletStatus = document.getElementById('walletStatus');
+const newGameBtn = document.getElementById('newGameBtn');
+const grid = document.getElementById('grid');
+const movesSpan = document.getElementById('moves');
+const matchesSpan = document.getElementById('matches');
+const resultDiv = document.getElementById('result');
+const submitBtn = document.getElementById('submitScoreBtn');
+const txStatus = document.getElementById('txStatus');
+const lastScoreSpan = document.getElementById('lastScore');
+const leaderboardList = document.getElementById('leaderboardList');
+const myBestP = document.getElementById('myBest');
+const contractLink = document.getElementById('contractLink');
+
+contractLink.href = `https://sepolia.etherscan.io/address/${CONTRACT_ADDRESS}`;
+contractLink.textContent = CONTRACT_ADDRESS;
+
+// ---------------- Wallet connect ----------------
+async function connectWallet() {
+  if(!window.ethereum) { walletStatus.textContent='MetaMask not installed'; return; }
+  try {
+    await window.ethereum.request({ method: 'eth_requestAccounts' });
+    provider = new ethers.BrowserProvider(window.ethereum);
+    signer = await provider.getSigner();
+    const address = await signer.getAddress();
+    walletStatus.textContent = 'Connected: ' + address;
+    contract = new ethers.Contract(CONTRACT_ADDRESS, CONTRACT_ABI, signer);
+    updateMyBest();
+    fetchLeaderboard();
+  } catch(e) {
+    walletStatus.textContent = 'Connection failed';
+    console.error(e);
+  }
+}
+connectBtn.addEventListener('click', connectWallet);
+
+// ---------------- Game ----------------
+const symbols = ['🍎','🍌','🍇','🍓','🍒','🍍','🥝','🍉'];
+let deck = [], firstCard=null, secondCard=null, lock=false;
+let moves=0, matches=0, lastScore=0;
+
+function shuffle(a) {
+  for(let i=a.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [a[i],a[j]]=[a[j],a[i]];
+  }
+}
+
+function startGame(){
+  deck = symbols.concat(symbols);
+  shuffle(deck);
+  grid.innerHTML='';
+  deck.forEach((symbol, idx)=>{
+    const li = document.createElement('li');
+    li.className='card';
+    li.dataset.index=idx;
+    li.innerHTML=`
+      <div class="card-inner">
+        <div class="card-front">?</div>
+        <div class="card-back">${symbol}</div>
+      </div>
+    `;
+    li.addEventListener('click', onCardClick);
+    grid.appendChild(li);
+  });
+  moves=0; matches=0; movesSpan.textContent=moves; matchesSpan.textContent=matches;
+  resultDiv.textContent=''; lastScore=0; lastScoreSpan.textContent='—'; submitBtn.disabled=true;
+}
+
+function onCardClick(e){
+  if(lock) return;
+  const card = e.currentTarget;
+  if(card.classList.contains('flipped')) return;
+
+  card.classList.add('flipped');
+  if(!firstCard){ firstCard=card; return; }
+  secondCard=card; lock=true;
+  moves++; movesSpan.textContent=moves;
+
+  const idx1=parseInt(firstCard.dataset.index), idx2=parseInt(secondCard.dataset.index);
+  if(deck[idx1]===deck[idx2]){
+    matches++; matchesSpan.textContent=matches;
+    firstCard.removeEventListener('click', onCardClick);
+    secondCard.removeEventListener('click', onCardClick);
+    resetTurn();
+    if(matches===symbols.length){ onGameEnd(); }
+  } else {
+    setTimeout(()=>{ firstCard.classList.remove('flipped'); secondCard.classList.remove('flipped'); resetTurn(); }, 800);
+  }
+}
+
+function resetTurn(){ [firstCard,secondCard]=[null,null]; lock=false; }
+
+function onGameEnd(){
+  lastScore = Math.max(0, 1000 - moves*10); // allow all scores
+  lastScoreSpan.textContent = lastScore;
+  resultDiv.textContent=`Finished! Moves: ${moves}. Score: ${lastScore}`;
+  submitBtn.disabled=false;
+}
+
+newGameBtn.addEventListener('click', startGame);
+
+// ---------------- Blockchain ----------------
+submitBtn.addEventListener('click', async ()=>{
+  if(!contract){ txStatus.textContent='Connect wallet first'; return; }
+  try{
+    txStatus.textContent='Sending transaction...';
+    const tx = await contract.recordScore(lastScore);
+    txStatus.textContent='Transaction sent. Waiting for confirmation...';
+    await tx.wait();
+    txStatus.textContent='Transaction mined! Score saved.';
+    updateMyBest();
+    fetchLeaderboard();
+  }catch(err){
+    console.error(err);
+    txStatus.textContent='Transaction failed or rejected.';
+  }
+});
+
+async function fetchLeaderboard(){
+  if(!contract) return;
+  try{
+    const [players,scores] = await contract.getTopScores();
+    leaderboardList.innerHTML='';
+    for(let i=0;i<5;i++){
+      if(players[i]){
+        const li = document.createElement('li');
+        li.textContent = `${players[i]} : ${scores[i].toString()}`;
+        leaderboardList.appendChild(li);
+      } else {
+        const li = document.createElement('li');
+        li.textContent = '—';
+        leaderboardList.appendChild(li);
+      }
+    }
+  }catch(err){ console.error('Leaderboard fetch error', err); }
+}
+
+async function updateMyBest(){
+  if(!contract || !signer) return;
+  try{
+    const best = await contract.getMyBestScore();
+    myBestP.textContent = best.toString();
+  }catch(err){ console.error('Error fetching my best',err); }
+}
+
+startGame();
+</script>
+</body>
+</html>
